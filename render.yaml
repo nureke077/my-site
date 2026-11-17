@@ -1,0 +1,12 @@
+# Публикация на Render.com (бесплатный тариф): New → Blueprint → выбрать этот репозиторий.
+# На бесплатном тарифе нет постоянного диска: база создаётся заново с демо-данными
+# при каждом перезапуске. Для постоянного хранения нужен платный диск (см. README).
+services:
+  - type: web
+    name: doktor-khvost
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: COOKIE_SECURE
+        value: "1"
