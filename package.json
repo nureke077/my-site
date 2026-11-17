@@ -2,9 +2,11 @@
   "name": "doktor-khvost",
   "private": true,
   "type": "module",
-  "description": "Учебный сайт ветклиники «Доктор Хвост»: запись, очередь и карты пациентов.",
+  "description": "Учебный сайт ветклиники «Доктор Хвост»: запись, очередь и карты пациентов на SQLite.",
+  "engines": { "node": ">=22.5" },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "reset-db": "node -e \"for (const f of ['clinic.db','clinic.db-wal','clinic.db-shm']) require('fs').rmSync('data/'+f,{force:true})\""
   }
 }
