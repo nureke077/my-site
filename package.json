@@ -1,0 +1,10 @@
+{
+  "name": "doktor-khvost",
+  "private": true,
+  "type": "module",
+  "description": "Учебный сайт ветклиники «Доктор Хвост»: запись, очередь и карты пациентов.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules/
+data/*.db
+data/*.db-*
+data/*.db-wal
+data/*.db-shm
+backups/
+fake-output/
+.DS_Store
+*.log
