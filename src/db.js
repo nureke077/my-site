@@ -4,8 +4,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { hashPassword, randomPassword } from './auth.js';
-import { localDate, addDays, weekday } from './util.js';
+import { seed } from './seed.js';
 
 export const MIGRATIONS = [
   // v1 — первая версия сайта
@@ -159,6 +158,60 @@ export const MIGRATIONS = [
   );
   CREATE INDEX invoice_appt ON invoice_lines(appointment_id);
   `,
+
+  // v3 — филиалы в Астане, фото сотрудников, категории и иконки услуг
+  `
+  CREATE TABLE branches (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    district     TEXT NOT NULL,
+    address      TEXT NOT NULL,
+    phone        TEXT NOT NULL,
+    lat          REAL NOT NULL,
+    lng          REAL NOT NULL,
+    hours        TEXT NOT NULL,
+    is_24h       INTEGER NOT NULL DEFAULT 0,
+    has_surgery  INTEGER NOT NULL DEFAULT 0,
+    has_lab      INTEGER NOT NULL DEFAULT 0,
+    has_hospital INTEGER NOT NULL DEFAULT 0,
+    description  TEXT NOT NULL DEFAULT ''
+  );
+  INSERT INTO branches (id, name, district, address, phone, lat, lng, hours, is_24h, has_surgery, has_lab, has_hospital, description) VALUES
+    (1,  'Есиль',        'Есильский район',    'пр. Мангилик Ел, 20',            '+7 7172 20 00 01', 51.0920, 71.4180, 'Круглосуточно', 1, 1, 1, 1, 'Главная клиника: операционная, стационар и лаборатория.'),
+    (2,  'Хан Шатыр',    'Есильский район',    'пр. Туран, 37',                  '+7 7172 20 00 02', 51.1310, 71.4040, '09:00–21:00',   0, 0, 1, 0, 'Рядом с ТРЦ «Хан Шатыр», удобная парковка.'),
+    (3,  'Сыганак',      'Есильский район',    'ул. Сыганак, 10',                '+7 7172 20 00 03', 51.1110, 71.4290, '09:00–21:00',   0, 1, 1, 0, 'Хирургия и УЗИ-диагностика.'),
+    (4,  'Улы Дала',     'Есильский район',    'пр. Улы Дала, 7',                '+7 7172 20 00 04', 51.1215, 71.3850, '09:00–20:00',   0, 0, 0, 0, 'Терапия и стоматология для собак и кошек.'),
+    (5,  'Республики',   'Алматинский район',  'пр. Республики, 34',             '+7 7172 20 00 05', 51.1625, 71.4390, '09:00–21:00',   0, 0, 1, 0, 'В центре правого берега.'),
+    (6,  'Абай',         'Сарыаркинский район','пр. Абая, 49',                   '+7 7172 20 00 06', 51.1665, 71.4255, '09:00–20:00',   0, 0, 0, 0, 'Приём экзотических животных: птицы, грызуны, рептилии.'),
+    (7,  'Сарыарка',     'Сарыаркинский район','пр. Сарыарка, 15',               '+7 7172 20 00 07', 51.1775, 71.4120, '09:00–20:00',   0, 1, 0, 0, 'Хирургия и дерматология.'),
+    (8,  'Тауелсиздик',  'Алматинский район',  'пр. Тауелсиздик, 21',            '+7 7172 20 00 08', 51.1500, 71.4680, 'Круглосуточно', 1, 0, 1, 1, 'Круглосуточный приём и стационар на правом берегу.'),
+    (9,  'Кенесары',     'Байконурский район', 'ул. Кенесары, 70',               '+7 7172 20 00 09', 51.1730, 71.4560, '09:00–21:00',   0, 0, 1, 0, 'Стоматология и терапия.'),
+    (10, 'Шакарим',      'Алматинский район',  'пр. Шакарима Кудайбердиулы, 25', '+7 7172 20 00 10', 51.1690, 71.4880, '09:00–20:00',   0, 1, 0, 0, 'Новый филиал на северо-востоке города.');
+
+  ALTER TABLE doctors ADD COLUMN branch_id INTEGER REFERENCES branches(id);
+  ALTER TABLE doctors ADD COLUMN gender TEXT NOT NULL DEFAULT 'm' CHECK (gender IN ('m','f'));
+  ALTER TABLE doctors ADD COLUMN experience_years INTEGER;
+  UPDATE doctors SET branch_id = 1;
+
+  ALTER TABLE appointments ADD COLUMN branch_id INTEGER REFERENCES branches(id);
+  UPDATE appointments SET branch_id = (SELECT branch_id FROM doctors d WHERE d.user_id = vet_id);
+  CREATE INDEX appt_branch ON appointments(branch_id, starts_at);
+
+  ALTER TABLE services ADD COLUMN icon TEXT NOT NULL DEFAULT 'stethoscope';
+  ALTER TABLE services ADD COLUMN category TEXT NOT NULL DEFAULT 'Терапия';
+  UPDATE services SET icon = 'syringe',    category = 'Профилактика' WHERE name LIKE '%акцин%';
+  UPDATE services SET icon = 'chip',       category = 'Профилактика' WHERE name LIKE '%ипирован%';
+  UPDATE services SET icon = 'ultrasound', category = 'Диагностика'  WHERE name LIKE '%УЗИ%';
+  UPDATE services SET icon = 'scalpel',    category = 'Хирургия'     WHERE name LIKE '%терилизац%' OR name LIKE '%астрац%';
+  UPDATE services SET icon = 'skin',       category = 'Специалисты'  WHERE name LIKE '%ермато%';
+
+  CREATE TABLE staff_photos (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    mime       TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  `,
 ];
 
 function migrate(db) {
@@ -195,146 +248,3 @@ export function log(db, userId, action, details = '') {
 export const INVOICE_TOTAL_SQL =
   '(a.price + COALESCE((SELECT SUM(l.price * l.qty) FROM invoice_lines l WHERE l.appointment_id = a.id), 0))';
 
-// ---------- демонстрационные данные (только в пустую базу) ----------
-
-// Детерминированный генератор случайных чисел — данные одинаковы при каждом сбросе.
-function prng(seed) {
-  let s = seed;
-  return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
-}
-
-function seed(db) {
-  if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n > 0) return;
-  const rnd = prng(42);
-  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-
-  const addUser = db.prepare(
-    'INSERT INTO users (email, password_hash, name, phone, role) VALUES (?, ?, ?, ?, ?)');
-  const user = (email, pass, name, phone, role) =>
-    Number(addUser.run(email, hashPassword(pass), name, phone, role).lastInsertRowid);
-
-  db.exec('BEGIN');
-  try {
-    user('admin@khvost.local', 'Admin12345', 'Ирина Смирнова', '+7 700 000 00 01', 'admin');
-    user('reception@khvost.local', 'Reception12345', 'Алия Нурланова', '+7 700 000 00 02', 'reception');
-
-    const addDoc = db.prepare('INSERT INTO doctors (user_id, specialty, bio) VALUES (?, ?, ?)');
-    const addHours = db.prepare('INSERT INTO vet_schedule (vet_id, weekday, start_time, end_time) VALUES (?, ?, ?, ?)');
-    const hours = (vet, days, from, to) => days.forEach((d) => addHours.run(vet, d, from, to));
-
-    const v1 = user('vet@khvost.local', 'Vet12345', 'Дмитрий Ковалёв', '+7 700 000 00 03', 'vet');
-    addDoc.run(v1, 'Терапевт', 'Первичный приём, вакцинация, профилактика. Стаж 9 лет.');
-    hours(v1, [0, 1, 2, 3, 4, 5, 6], '09:00', '18:00');
-    const v2 = user('surgeon@khvost.local', 'Vet12345', 'Мария Ахметова', '+7 700 000 00 04', 'vet');
-    addDoc.run(v2, 'Хирург', 'Плановые операции, стерилизация, травмы. Стаж 12 лет.');
-    hours(v2, [1, 2, 3, 4, 5], '09:00', '15:00');
-    const v3 = user('derm@khvost.local', 'Vet12345', 'Олег Ли', '+7 700 000 00 05', 'vet');
-    addDoc.run(v3, 'Дерматолог', 'Кожа, шерсть, аллергии. Работает с экзотическими животными.');
-    hours(v3, [0, 1, 2, 3, 4, 5, 6], '11:00', '18:00');
-    const vets = [v1, v2, v3];
-
-    const addSvc = db.prepare(
-      'INSERT INTO services (name, description, price, duration_min, is_vaccination) VALUES (?, ?, ?, ?, ?)');
-    const svc = [
-      ['Первичный осмотр', 'Осмотр, сбор анамнеза, план лечения', 6000, 30, 0],
-      ['Вакцинация', 'Комплексная прививка с отметкой в паспорте', 8000, 30, 1],
-      ['Чипирование', 'Чип международного стандарта и регистрация', 7000, 30, 0],
-      ['УЗИ брюшной полости', 'Диагностика с заключением врача', 12000, 30, 0],
-      ['Стерилизация кошки', 'Операция под наркозом, послеоперационный осмотр', 35000, 60, 0],
-      ['Консультация дерматолога', 'Осмотр кожи, соскоб, рекомендации', 7500, 30, 0],
-    ].map((r) => ({ id: Number(addSvc.run(...r).lastInsertRowid), price: r[2], duration: r[3] }));
-    // Кто какие услуги обычно оказывает
-    const vetServices = { [v1]: [0, 1, 2, 3], [v2]: [4, 3, 0], [v3]: [5, 0] };
-
-    const addPet = db.prepare(
-      'INSERT INTO pets (owner_id, name, species, breed, birth_date, notes) VALUES (?, ?, ?, ?, ?, ?)');
-    const pet = (...a) => Number(addPet.run(...a).lastInsertRowid);
-
-    const c = user('client@khvost.local', 'Client12345', 'Анна Петрова', '+7 700 123 45 67', 'client');
-    const barsik = pet(c, 'Барсик', 'Кошка', 'Британская', '2021-03-14', '');
-    const rex = pet(c, 'Рекс', 'Собака', 'Лабрадор', '2019-07-02', 'Аллергия на курицу');
-
-    // Ещё владельцы — чтобы в отчётах были данные
-    const others = [
-      ['Ержан Касымов', '+7 701 555 12 34', [['Тайсон', 'Собака', 'Немецкая овчарка'], ['Мия', 'Кошка', 'Сиамская']]],
-      ['Светлана Ким', '+7 702 444 98 76', [['Пушок', 'Кролик', 'Карликовый']]],
-      ['Арман Жумабаев', '+7 705 321 65 43', [['Лаки', 'Собака', 'Корги'], ['Соня', 'Кошка', 'Мейн-кун']]],
-      ['Ольга Иванова', '+7 707 888 11 22', [['Граф', 'Собака', 'Доберман']]],
-    ];
-    const otherPets = [];
-    others.forEach(([name, phone, pets], i) => {
-      const id = user(`owner${i + 1}@example.kz`, randomPassword(), name, phone, 'client');
-      for (const [n, sp, br] of pets) otherPets.push(pet(id, n, sp, br, `20${16 + i}-0${i + 2}-1${i}`, ''));
-    });
-
-    const addAppt = db.prepare(`INSERT INTO appointments
-      (pet_id, vet_id, service_id, starts_at, status, complaint, duration_min, price, paid_at, payment_method)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const appt = (petId, vet, s, at, status, complaint = '', paid = null) => Number(addAppt.run(
-      petId, vet, s.id, at, status, complaint, s.duration, s.price,
-      paid ? `${at.replace('T', ' ')}:00` : null, paid).lastInsertRowid);
-    const addRecord = db.prepare('INSERT INTO records (appointment_id, diagnosis, treatment, recommendations, weight_kg) VALUES (?, ?, ?, ?, ?)');
-    const addReview = db.prepare('INSERT INTO reviews (appointment_id, rating, comment) VALUES (?, ?, ?)');
-    const addLine = db.prepare('INSERT INTO invoice_lines (appointment_id, item_id, name, price, qty) SELECT ?, id, name, price, ? FROM items WHERE id = ?');
-    const schedule = db.prepare('SELECT start_time, end_time FROM vet_schedule WHERE vet_id = ? AND weekday = ?');
-
-    const today = localDate();
-    const diagnoses = [
-      ['Здоров', 'Плановый осмотр', 'Повторный осмотр через год'],
-      ['Гастрит', 'Диета, омепразол 5 дней', 'Кормить малыми порциями'],
-      ['Аллергический дерматит', 'Антигистаминные, лечебный шампунь', 'Исключить курицу из рациона'],
-      ['Отит', 'Капли в уши 7 дней', 'Контроль через неделю'],
-      ['Послеоперационный период без осложнений', 'Снятие швов на 10-й день', 'Попона, ограничить активность'],
-    ];
-    const comments = ['Очень внимательный врач!', 'Всё объяснили, спасибо', 'Быстро и без очереди', 'Хорошо, но пришлось подождать', 'Лучшая клиника в городе', ''];
-
-    // История Рекса: прививка 2 недели назад. У Барсика прививок нет — кабинет напомнит.
-    const past = appt(rex, v1, svc[1], `${addDays(today, -14)}T10:00`, 'done', 'Плановая прививка', 'card');
-    addRecord.run(past, 'Здоров', 'Вакцина Нобивак DHPPi+L', 'Следующая прививка через год', 31.5);
-    addReview.run(past, 5, 'Рекс даже не испугался. Спасибо доктору!');
-
-    // Прошедшие 45 дней: завершённые и оплаченные приёмы
-    const hourTaken = db.prepare("SELECT 1 FROM appointments WHERE vet_id = ? AND substr(starts_at, 1, 13) = ?");
-    for (let d = -45; d <= -1; d++) {
-      const date = addDays(today, d);
-      const used = new Set();
-      const count = 6 + Math.floor(rnd() * 8);
-      for (let k = 0; k < count; k++) {
-        const vet = pick(vets);
-        const h = schedule.get(vet, weekday(date));
-        if (!h) continue;
-        const s = svc[pick(vetServices[vet])];
-        const startH = Number(h.start_time.slice(0, 2));
-        const lastH = Number(h.end_time.slice(0, 2)) - Math.ceil(s.duration / 60);
-        const time = `${String(startH + Math.floor(rnd() * (lastH - startH))).padStart(2, '0')}:${rnd() < 0.5 ? '00' : '30'}`;
-        const key = `${vet}-${time.slice(0, 2)}`;
-        if (used.has(key) || hourTaken.get(vet, `${date}T${time.slice(0, 2)}`)) continue;
-        used.add(key);
-        const cancelled = rnd() < 0.08;
-        const id = appt(pick(otherPets), vet, s, `${date}T${time}`, cancelled ? 'cancelled' : 'done', '', cancelled ? null : (rnd() < 0.6 ? 'card' : 'cash'));
-        if (cancelled) continue;
-        const dx = s === svc[4] ? diagnoses[4] : s === svc[5] ? diagnoses[2] : pick(diagnoses.slice(0, 4));
-        addRecord.run(id, ...dx, Math.round((3 + rnd() * 30) * 10) / 10);
-        if (rnd() < 0.35) addLine.run(id, 1 + Math.floor(rnd() * 2), 1 + Math.floor(rnd() * 6));
-        if (rnd() < 0.45) addReview.run(id, rnd() < 0.8 ? 5 : 4, pick(comments));
-      }
-    }
-
-    // Ближайшие записи: в рабочие дни врачей
-    const nextWorkday = (vet, from) => {
-      for (let i = 0; i < 14; i++) { const d = addDays(from, i); if (schedule.get(vet, weekday(d))) return d; }
-      return from;
-    };
-    appt(barsik, v1, svc[0], `${nextWorkday(v1, today)}T11:00`, 'booked', 'Плохо ест второй день');
-    appt(rex, v3, svc[5], `${nextWorkday(v3, today)}T15:30`, 'booked', 'Чешется, выпадает шерсть');
-    appt(barsik, v2, svc[4], `${nextWorkday(v2, addDays(today, 3))}T10:00`, 'booked', '');
-    appt(otherPets[0], v1, svc[1], `${nextWorkday(v1, today)}T12:30`, 'booked', '');
-    appt(otherPets[2], v3, svc[5], `${nextWorkday(v3, today)}T12:00`, 'booked', 'Шелушится кожа');
-
-    log(db, null, 'Начальные данные', 'Созданы демонстрационные записи');
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
-}

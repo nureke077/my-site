@@ -1,7 +1,8 @@
 // Главная, вход, регистрация, выход.
 import { log } from '../db.js';
 import { verifyPassword, hashPassword, createSession, destroySession } from '../auth.js';
-import { readForm, redirect, json, sessionCookie } from '../http.js';
+import { HttpError, readForm, redirect, json, send, sessionCookie } from '../http.js';
+import { petSvg, heroSvg, doctorSvg, SPECIES_ART } from '../art.js';
 import { digits, samePhone, WEEK } from '../util.js';
 import * as view from '../views/public.js';
 
@@ -29,21 +30,54 @@ export function formatHours(rows) {
 export default function register(app) {
   const { db, route, page } = app;
 
-  route('GET', '/', (ctx, res) => {
-    const doctors = db.prepare(`
-      SELECT u.id, u.name, d.specialty, d.bio,
+  const doctorsWithRating = (where = '', ...params) => db.prepare(`
+      SELECT u.id, u.name, d.specialty, d.bio, d.gender, d.experience_years, d.branch_id, b.name AS branch_name,
              (SELECT AVG(r.rating) FROM reviews r JOIN appointments a ON a.id = r.appointment_id WHERE a.vet_id = u.id) AS rating,
              (SELECT COUNT(*) FROM reviews r JOIN appointments a ON a.id = r.appointment_id WHERE a.vet_id = u.id) AS reviews
-      FROM doctors d JOIN users u ON u.id = d.user_id WHERE u.blocked = 0 ORDER BY u.name`).all()
-      .map((d) => ({ ...d, hours: formatHours(db.prepare('SELECT * FROM vet_schedule WHERE vet_id = ?').all(d.id)) }));
+      FROM doctors d JOIN users u ON u.id = d.user_id LEFT JOIN branches b ON b.id = d.branch_id
+      WHERE u.blocked = 0 ${where}`).all(...params);
+
+  route('GET', '/', (ctx, res) => {
+    const doctors = doctorsWithRating()
+      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || b.reviews - a.reviews).slice(0, 8);
     const reviews = db.prepare(`
-      SELECT r.rating, r.comment, r.created_at, o.name AS owner_name, v.name AS vet_name
+      SELECT r.rating, r.comment, r.created_at, o.name AS owner_name, p.name AS pet_name, p.species, v.name AS vet_name
       FROM reviews r JOIN appointments a ON a.id = r.appointment_id
       JOIN pets p ON p.id = a.pet_id JOIN users o ON o.id = p.owner_id JOIN users v ON v.id = a.vet_id
-      WHERE r.comment <> '' ORDER BY r.id DESC LIMIT 6`).all();
+      WHERE r.id IN (SELECT MAX(id) FROM reviews WHERE length(comment) > 12 AND rating >= 4 GROUP BY comment)
+      ORDER BY r.created_at DESC LIMIT 6`).all()
+      .map((r) => ({ ...r, art: SPECIES_ART[r.species] ?? 'paw' }));
     const clinic = db.prepare(`SELECT (SELECT AVG(rating) FROM reviews) AS rating, (SELECT COUNT(*) FROM reviews) AS reviews,
-      (SELECT COUNT(*) FROM pets) AS patients`).get();
-    page(res, ctx, 'Ветеринарная клиника', view.home({ services: app.services(), doctors, reviews, clinic, user: ctx.user }));
+      (SELECT COUNT(*) FROM appointments WHERE status = 'done') AS visits,
+      (SELECT COUNT(*) FROM doctors d JOIN users u ON u.id = d.user_id WHERE u.blocked = 0) AS doctors`).get();
+    page(res, ctx, 'Ветеринарная клиника в Астане', view.home({ services: app.services(), doctors, reviews, clinic, branches: app.branches(), user: ctx.user }), { full: true, map: true });
+  });
+
+  route('GET', '/branches', (ctx, res) => {
+    const doctorsByBranch = Map.groupBy(app.doctors(), (d) => d.branch_id);
+    page(res, ctx, 'Филиалы', view.branchesPage({ branches: app.branches(), doctorsByBranch }), { full: true, map: true });
+  });
+
+  route('GET', '/doctors', (ctx, res) => {
+    const p = ctx.url.searchParams;
+    const filter = { specialty: p.get('specialty') ?? '', branch: Number(p.get('branch')) || '' };
+    let doctors = doctorsWithRating().sort((a, b) => a.branch_id - b.branch_id || a.name.localeCompare(b.name));
+    const specialties = [...new Set(doctors.map((d) => d.specialty))].sort();
+    if (filter.specialty) doctors = doctors.filter((d) => d.specialty === filter.specialty);
+    if (filter.branch) doctors = doctors.filter((d) => d.branch_id === filter.branch);
+    page(res, ctx, 'Врачи', view.doctorsPage({ doctors, specialties, branches: app.branches(), filter }), { full: true });
+  });
+
+  // Иллюстрации и фото
+  const svg = (res, body) => send(res, 200, body, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+  route('GET', '/art/hero.svg', (ctx, res) => svg(res, heroSvg()));
+  route('GET', '/art/pet/*name', (ctx, res, req, { name }) => svg(res, petSvg(name.replace(/\.svg$/, ''))));
+  route('GET', '/doctors/:id/photo', (ctx, res, req, { id }) => {
+    const photo = db.prepare('SELECT mime, data FROM staff_photos WHERE user_id = ?').get(Number(id));
+    if (photo) return send(res, 200, Buffer.from(photo.data), { 'Content-Type': photo.mime, 'Cache-Control': 'public, max-age=60' });
+    const d = db.prepare('SELECT gender FROM doctors WHERE user_id = ?').get(Number(id));
+    if (!d) throw new HttpError(404);
+    svg(res, doctorSvg(id, d.gender));
   });
 
   route('GET', '/health', (ctx, res) => json(res, { ok: true, db: db.prepare('SELECT 1 AS x').get().x === 1 }));

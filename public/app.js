@@ -33,17 +33,42 @@ if (petSelect) {
   sync();
 }
 
-// Новый сотрудник: специализация только для врача
+// Новый сотрудник: специализация, филиал и пол — только для врача
 const roleSelect = document.querySelector('[data-role]');
 if (roleSelect) {
-  const field = document.querySelector('[data-vet-only]');
+  const fields = document.querySelectorAll('[data-vet-only]');
   const sync = () => {
     const vet = roleSelect.value === 'vet';
-    field.hidden = !vet;
-    field.querySelector('input').required = vet;
+    fields.forEach((f) => {
+      f.hidden = !vet;
+      const input = f.querySelector('input');
+      if (input) input.required = vet;
+    });
   };
   roleSelect.addEventListener('change', sync);
   sync();
+}
+
+// Запись: список врачей — только из выбранного филиала
+const branchSel = document.querySelector('[data-branch]');
+const vetSel = document.querySelector('select[data-vet]');
+if (branchSel && vetSel) {
+  const filterVets = () => {
+    const branch = branchSel.value;
+    let firstVisible = null;
+    for (const opt of vetSel.options) {
+      const hide = Boolean(branch) && opt.dataset.branch !== branch;
+      opt.hidden = hide;
+      opt.disabled = hide;
+      if (!hide && !firstVisible) firstVisible = opt;
+    }
+    if (vetSel.selectedOptions[0]?.disabled && firstVisible) {
+      vetSel.value = firstVisible.value;
+      vetSel.dispatchEvent(new Event('change'));
+    }
+  };
+  branchSel.addEventListener('change', filterVets);
+  filterVets();
 }
 
 // Свободное время с учётом графика врача и длительности услуги

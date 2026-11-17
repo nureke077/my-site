@@ -1,6 +1,6 @@
 // Кабинет владельца, запись, перенос, отзывы.
 import { esc, humanDate, money, SPECIES, stars } from '../util.js';
-import { csrfField, badge, time, petAvatar, slotPicker } from './layout.js';
+import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields } from './layout.js';
 
 function petForm(csrf) {
   return `
@@ -67,10 +67,10 @@ ${reminders.map((r) => `
 <section class="section">
   <h2>Предстоящие записи</h2>
   ${upcoming.length ? `<div class="table-wrap"><table class="table">
-    <thead><tr><th>Когда</th><th>Питомец</th><th>Услуга</th><th>Врач</th><th>Статус</th><th></th></tr></thead>
+    <thead><tr><th>Когда</th><th>Питомец</th><th>Услуга</th><th>Врач и филиал</th><th>Статус</th><th></th></tr></thead>
     <tbody>${upcoming.map((a) => `<tr>
       <td><b>${esc(humanDate(a.starts_at))}</b>, ${time(a.starts_at)}</td>
-      <td>${esc(a.pet_name)}</td><td>${esc(a.service_name)}<br><small class="muted">${money(a.price)}</small></td><td>${esc(a.vet_name)}</td><td>${badge(a.status)}</td>
+      <td>${esc(a.pet_name)}</td><td>${esc(a.service_name)}<br><small class="muted">${money(a.price)}</small></td><td>${esc(a.vet_name)}<br><small class="muted">${esc(a.branch_name ?? '')}${a.branch_address ? `, ${esc(a.branch_address)}` : ''}</small></td><td>${badge(a.status)}</td>
       <td class="actions">${a.status === 'booked' && a.starts_at > now ? `
         <a class="btn btn-ghost btn-sm" href="/appointments/${a.id}/reschedule">Перенести</a>
         <form method="post" action="/appointments/${a.id}/cancel" data-confirm="Отменить запись?">${csrfField(csrf)}<button class="btn btn-ghost btn-sm">Отменить</button></form>` : ''}</td>
@@ -93,19 +93,19 @@ ${reminders.map((r) => `
 </section>`;
 }
 
-export function book({ pets, services, doctors, values = {}, error, today, maxDate, csrf }) {
+export function book({ pets, services, doctors, branches, values = {}, error, today, maxDate, csrf }) {
   if (!pets.length) {
     return `<h1>Запись на приём</h1><p class="empty">Сначала добавьте питомца в <a href="/cabinet">кабинете</a>.</p>`;
   }
   const sel = (a, b) => (String(a) === String(b) ? ' selected' : '');
   return `
-<h1>Запись на приём</h1>
+<div class="page-head"><div><p class="eyebrow">Онлайн-запись</p><h1>Запись на приём</h1><p class="muted">Свободное время считается по графику врача и длительности услуги.</p></div></div>
 ${error ? `<p class="error">${esc(error)}</p>` : ''}
 <form method="post" action="/book" class="form card book-form" data-book>
   ${csrfField(csrf)}
   <label>Питомец<select name="pet_id" required>${pets.map((p) => `<option value="${p.id}"${sel(p.id, values.pet_id)}>${esc(p.name)} (${esc(p.species)})</option>`).join('')}</select></label>
   <label>Услуга<select name="service_id" required data-service>${services.map((s) => `<option value="${s.id}"${sel(s.id, values.service_id)}>${esc(s.name)} — ${money(s.price)}, ${s.duration_min} мин</option>`).join('')}</select></label>
-  <label>Врач<select name="vet_id" required data-vet>${doctors.map((d) => `<option value="${d.id}"${sel(d.id, values.vet_id)}>${esc(d.name)}, ${esc(d.specialty)}</option>`).join('')}</select></label>
+  ${branchVetFields({ branches, doctors, values })}
   <label>Дата<input type="date" name="date" required min="${today}" max="${maxDate}" value="${esc(values.date || today)}" data-date></label>
   ${slotPicker({ selected: values.time })}
   <label class="span-2">Что беспокоит<textarea name="complaint" rows="3" maxlength="500" placeholder="Например: плохо ест, хромает на заднюю лапу">${esc(values.complaint)}</textarea></label>
@@ -117,7 +117,7 @@ export function reschedule({ a, values = {}, error, today, maxDate, csrf }) {
   return `
 <p><a href="/cabinet">← в кабинет</a></p>
 <h1>Перенос записи</h1>
-<p class="muted">${esc(a.pet_name)} · ${esc(a.service_name)} · ${esc(a.vet_name)}. Сейчас: <b>${esc(humanDate(a.starts_at))}, ${time(a.starts_at)}</b></p>
+<p class="muted">${esc(a.pet_name)} · ${esc(a.service_name)} · ${esc(a.vet_name)} (${esc(a.branch_name ?? '')}). Сейчас: <b>${esc(humanDate(a.starts_at))}, ${time(a.starts_at)}</b></p>
 ${error ? `<p class="error">${esc(error)}</p>` : ''}
 <form method="post" action="/appointments/${a.id}/reschedule" class="form card book-form" data-book>
   ${csrfField(csrf)}

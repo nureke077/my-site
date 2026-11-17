@@ -1,6 +1,6 @@
 // Страницы администратора.
 import { esc, money, ROLE, WEEK, ITEM_KIND, humanDate, stars, plural } from '../util.js';
-import { csrfField } from './layout.js';
+import { csrfField, doctorAvatar } from './layout.js';
 import { columnChart, barList, dataTable } from './charts.js';
 
 const TABS = [['/admin', 'Сводка'], ['/admin/reports', 'Отчёты'], ['/admin/staff', 'Сотрудники'], ['/admin/prices', 'Прайс'], ['/admin/backups', 'Резервные копии']];
@@ -32,7 +32,7 @@ ${stats.unpaid ? `<p class="reminder">💳 Неоплаченных заверш
 </section>`;
 }
 
-export function reports({ from, to, totals, daily, vets, services }) {
+export function reports({ from, to, totals, daily, vets, services, branches }) {
   const presets = [[7, '7 дней'], [30, '30 дней'], [90, '90 дней']];
   return `
 ${tabs('/admin/reports')}
@@ -59,6 +59,13 @@ ${tabs('/admin/reports')}
   ${dataTable(['Дата', 'Приёмов', 'Выручка'], daily.map((d) => [d.date, d.visits, money(d.revenue)]))}
 </section>
 
+<section class="section card">
+  <h2>Филиалы</h2>
+  <p class="muted small">Оплаченная выручка за период</p>
+  ${barList({ data: branches.map((b) => ({ label: b.name, value: b.revenue, display: money(b.revenue), sub: `${b.visits} приёмов · средний чек ${money(b.avg)}` })) })}
+  ${dataTable(['Филиал', 'Приёмов', 'Выручка', 'Средний чек'], branches.map((b) => [b.name, b.visits, money(b.revenue), money(b.avg)]))}
+</section>
+
 <div class="grid grid-2 section">
   <article class="card">
     <h2>Загрузка врачей</h2>
@@ -75,14 +82,14 @@ ${tabs('/admin/reports')}
 </div>`;
 }
 
-export function staffList({ staff, csrf, error, values = {} }) {
+export function staffList({ staff, branches, csrf, error, values = {} }) {
   return `
 ${tabs('/admin/staff')}
 <h1>Сотрудники</h1>
 <div class="table-wrap"><table class="table">
-  <thead><tr><th>Имя</th><th>Почта</th><th>Роль</th><th>График</th><th>Статус</th><th></th></tr></thead>
+  <thead><tr><th>Сотрудник</th><th>Почта</th><th>Роль</th><th>График</th><th>Статус</th><th></th></tr></thead>
   <tbody>${staff.map((u) => `<tr class="${u.blocked ? 'row-cancelled' : ''}">
-    <td><b>${esc(u.name)}</b>${u.specialty ? `<br><small class="muted">${esc(u.specialty)}</small>` : ''}</td>
+    <td><div class="pet-cell">${u.role === 'vet' ? doctorAvatar(u, 'sm') : ''}<div><b>${esc(u.name)}</b>${u.specialty ? `<br><small class="muted">${esc(u.specialty)} · ${esc(u.branch_name ?? '')}</small>` : ''}</div></div></td>
     <td>${esc(u.email)}</td><td>${esc(ROLE[u.role])}</td>
     <td><small>${esc(u.hours ?? '')}</small></td>
     <td>${u.blocked ? '<span class="badge badge-cancelled">Заблокирован</span>' : '<span class="badge badge-done">Активен</span>'}</td>
@@ -100,6 +107,8 @@ ${tabs('/admin/staff')}
     <label>Телефон<input type="tel" name="phone" value="${esc(values.phone)}"></label>
     <label>Роль<select name="role" data-role>${['vet', 'reception', 'admin'].map((r) => `<option value="${r}"${values.role === r ? ' selected' : ''}>${ROLE[r]}</option>`).join('')}</select></label>
     <label data-vet-only>Специализация<input name="specialty" value="${esc(values.specialty)}" maxlength="60" placeholder="Терапевт"></label>
+    <label data-vet-only>Филиал<select name="branch_id">${branches.map((b) => `<option value="${b.id}"${String(values.branch_id) === String(b.id) ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
+    <label data-vet-only>Пол <small>для портрета</small><select name="gender"><option value="m">Мужской</option><option value="f"${values.gender === 'f' ? ' selected' : ''}>Женский</option></select></label>
     <label>Пароль <small>от 8 символов</small><input type="text" name="password" required minlength="8" autocomplete="new-password"></label>
     <button class="btn">Добавить</button>
   </form>
@@ -107,15 +116,16 @@ ${tabs('/admin/staff')}
 </section>`;
 }
 
-export function staffEdit({ u, me, schedule, timeOff, futureCount, csrf, today }) {
+export function staffEdit({ u, me, schedule, timeOff, futureCount, branches, csrf, today }) {
   const isVet = u.role === 'vet';
   const byDay = new Map(schedule.map((s) => [s.weekday, s]));
   return `
 ${tabs('/admin/staff')}
 <p><a href="/admin/staff">← все сотрудники</a></p>
-<div class="page-head"><div>
-  <h1>${esc(u.name)}</h1>
-  <p class="muted">${esc(ROLE[u.role])} · ${esc(u.email)} ${u.blocked ? '<span class="badge badge-cancelled">Заблокирован</span>' : ''}</p>
+<div class="page-head"><div class="pet-head">
+  ${isVet ? doctorAvatar(u, 'lg') : ''}
+  <div><h1>${esc(u.name)}</h1>
+  <p class="muted">${esc(ROLE[u.role])} · ${esc(u.email)} ${u.blocked ? '<span class="badge badge-cancelled">Заблокирован</span>' : ''}</p></div>
 </div></div>
 
 <div class="grid grid-2">
@@ -126,11 +136,23 @@ ${tabs('/admin/staff')}
     <label>Телефон<input type="tel" name="phone" value="${esc(u.phone)}"></label>
     ${isVet ? `
     <label>Специализация<input name="specialty" value="${esc(u.specialty)}" required maxlength="60"></label>
+    <label>Филиал<select name="branch_id">${branches.map((b) => `<option value="${b.id}"${b.id === u.branch_id ? ' selected' : ''}>${esc(b.name)} — ${esc(b.address)}</option>`).join('')}</select></label>
+    <label>Стаж, лет<input type="number" name="experience_years" value="${esc(u.experience_years ?? '')}" min="0" max="60"></label>
+    <label>Пол <small>для нарисованного портрета</small><select name="gender"><option value="m">Мужской</option><option value="f"${u.gender === 'f' ? ' selected' : ''}>Женский</option></select></label>
     <label>О враче (видно на сайте)<textarea name="bio" rows="3" maxlength="300">${esc(u.bio)}</textarea></label>` : ''}
     <button class="btn">Сохранить</button>
   </form>
 
   <div class="stack">
+    ${isVet ? `
+    <form method="post" action="/admin/staff/${u.id}/photo" class="form card" enctype="multipart/form-data">
+      ${csrfField(csrf)}
+      <h3>Фото на сайте</h3>
+      <div class="photo-row">${doctorAvatar(u, 'lg')}<p class="muted small">${u.has_photo ? 'Загружено фото.' : 'Сейчас показан нарисованный портрет.'} Подойдёт квадратное фото JPG, PNG или WebP до 2 МБ.</p></div>
+      <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required>
+      <div class="row-actions"><button class="btn btn-ghost">Загрузить фото</button>
+      ${u.has_photo ? `<button class="btn btn-ghost" formaction="/admin/staff/${u.id}/photo/delete" formnovalidate>Вернуть портрет</button>` : ''}</div>
+    </form>` : ''}
     <form method="post" action="/admin/staff/${u.id}/password" class="form card">
       ${csrfField(csrf)}
       <h3>Новый пароль</h3>

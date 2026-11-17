@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { log, INVOICE_TOTAL_SQL } from '../db.js';
 import { hashPassword } from '../auth.js';
 import { HttpError, readForm, redirect, send, toCsv } from '../http.js';
+import { savePhoto } from './client.js';
 import { localDate, localDateTime, addDays, isDate, isTime, weekday, toMin, digits, STATUS, PAYMENT, ROLE, ITEM_KIND } from '../util.js';
 import { formatHours } from './public.js';
 import * as view from '../views/admin.js';
@@ -104,22 +105,30 @@ export default function register(app) {
       WHERE a.status <> 'cancelled' AND a.starts_at >= ? AND a.starts_at < ?
       GROUP BY s.id ORDER BY n DESC`).all(...range);
 
-    page(res, ctx, 'Отчёты', view.reports({ from, to, totals, daily, vets, services }));
+    const branches = db.prepare(`
+      SELECT b.name, SUM(a.status = 'done') AS visits, SUM(a.paid_at IS NOT NULL) AS paid,
+             COALESCE(SUM(CASE WHEN a.paid_at IS NOT NULL THEN ${INVOICE_TOTAL_SQL} END), 0) AS revenue
+      FROM branches b LEFT JOIN appointments a ON a.branch_id = b.id AND a.starts_at >= ? AND a.starts_at < ?
+      GROUP BY b.id ORDER BY revenue DESC`).all(...range)
+      .map((b) => ({ ...b, visits: b.visits ?? 0, avg: b.paid ? Math.round(b.revenue / b.paid) : 0 }));
+
+    page(res, ctx, 'Отчёты', view.reports({ from, to, totals, daily, vets, services, branches }));
   });
 
   route('GET', '/admin/export.csv', (ctx, res) => {
     admin(ctx);
     const { from, to, end } = period(ctx.url.searchParams);
     const rows = db.prepare(`
-      SELECT a.id, a.starts_at, p.name AS pet, p.species, o.name AS owner, o.phone, v.name AS vet, s.name AS service,
+      SELECT a.id, a.starts_at, (SELECT name FROM branches b WHERE b.id = a.branch_id) AS branch,
+             p.name AS pet, p.species, o.name AS owner, o.phone, v.name AS vet, s.name AS service,
              a.status, ${INVOICE_TOTAL_SQL} AS total, a.payment_method, a.paid_at, r.diagnosis
       FROM appointments a JOIN pets p ON p.id = a.pet_id JOIN users o ON o.id = p.owner_id
       JOIN users v ON v.id = a.vet_id JOIN services s ON s.id = a.service_id
       LEFT JOIN records r ON r.appointment_id = a.id
       WHERE a.starts_at >= ? AND a.starts_at < ? ORDER BY a.starts_at`).all(from, end);
     const csv = toCsv([
-      ['№', 'Дата', 'Время', 'Пациент', 'Вид', 'Владелец', 'Телефон', 'Врач', 'Услуга', 'Статус', 'Сумма, ₸', 'Оплата', 'Оплачено', 'Диагноз'],
-      ...rows.map((r) => [r.id, r.starts_at.slice(0, 10), r.starts_at.slice(11, 16), r.pet, r.species, r.owner, r.phone, r.vet, r.service,
+      ['№', 'Дата', 'Время', 'Филиал', 'Пациент', 'Вид', 'Владелец', 'Телефон', 'Врач', 'Услуга', 'Статус', 'Сумма, ₸', 'Оплата', 'Оплачено', 'Диагноз'],
+      ...rows.map((r) => [r.id, r.starts_at.slice(0, 10), r.starts_at.slice(11, 16), r.branch ?? '', r.pet, r.species, r.owner, r.phone, r.vet, r.service,
         STATUS[r.status], r.total, PAYMENT[r.payment_method] ?? '', r.paid_at ?? '', r.diagnosis ?? '']),
     ]);
     log(db, ctx.user.id, 'Выгрузка CSV', `${from} — ${to}, строк: ${rows.length}`);
@@ -131,10 +140,11 @@ export default function register(app) {
 
   // ---------- сотрудники ----------
   function staffListPage(ctx, res, error, values, status = 200) {
-    const staff = db.prepare(`SELECT u.*, d.specialty FROM users u LEFT JOIN doctors d ON d.user_id = u.id
-      WHERE u.role <> 'client' ORDER BY u.blocked, u.role, u.name`).all()
+    const staff = db.prepare(`SELECT u.*, d.specialty, b.name AS branch_name FROM users u LEFT JOIN doctors d ON d.user_id = u.id
+      LEFT JOIN branches b ON b.id = d.branch_id
+      WHERE u.role <> 'client' ORDER BY u.blocked, u.role, d.branch_id, u.name`).all()
       .map((u) => ({ ...u, hours: u.role === 'vet' ? formatHours(db.prepare('SELECT * FROM vet_schedule WHERE vet_id = ?').all(u.id)) || 'нет приёма' : '' }));
-    page(res, ctx, 'Сотрудники', view.staffList({ staff, csrf: ctx.user.csrf, error, values }), { status });
+    page(res, ctx, 'Сотрудники', view.staffList({ staff, branches: app.branches(), csrf: ctx.user.csrf, error, values }), { status });
   }
 
   route('GET', '/admin/staff', (ctx, res) => { admin(ctx); staffListPage(ctx, res); });
@@ -155,7 +165,9 @@ export default function register(app) {
       const id = Number(db.prepare('INSERT INTO users (email, password_hash, name, phone, role) VALUES (?, ?, ?, ?, ?)')
         .run(f.email, hashPassword(f.password), f.name.slice(0, 80), f.phone || null, f.role).lastInsertRowid);
       if (f.role === 'vet') {
-        db.prepare('INSERT INTO doctors (user_id, specialty) VALUES (?, ?)').run(id, f.specialty.slice(0, 60));
+        const branch = db.prepare('SELECT id FROM branches WHERE id = ?').get(Number(f.branch_id))?.id ?? 1;
+        db.prepare('INSERT INTO doctors (user_id, specialty, branch_id, gender) VALUES (?, ?, ?, ?)')
+          .run(id, f.specialty.slice(0, 60), branch, f.gender === 'f' ? 'f' : 'm');
         const add = db.prepare("INSERT INTO vet_schedule (vet_id, weekday, start_time, end_time) VALUES (?, ?, '09:00', '18:00')");
         for (const d of [1, 2, 3, 4, 5]) add.run(id, d);
       }
@@ -169,7 +181,9 @@ export default function register(app) {
   });
 
   const staffById = (id) => {
-    const u = db.prepare(`SELECT u.*, d.specialty, d.bio FROM users u LEFT JOIN doctors d ON d.user_id = u.id
+    const u = db.prepare(`SELECT u.*, d.specialty, d.bio, d.branch_id, d.gender, d.experience_years,
+      (SELECT 1 FROM staff_photos sp WHERE sp.user_id = u.id) AS has_photo
+      FROM users u LEFT JOIN doctors d ON d.user_id = u.id
       WHERE u.id = ? AND u.role <> 'client'`).get(Number(id));
     if (!u) throw new HttpError(404);
     return u;
@@ -180,7 +194,7 @@ export default function register(app) {
     const u = staffById(id);
     const today = localDate();
     page(res, ctx, u.name, view.staffEdit({
-      u, me: ctx.user.id, csrf: ctx.user.csrf, today,
+      u, me: ctx.user.id, csrf: ctx.user.csrf, today, branches: app.branches(),
       schedule: db.prepare('SELECT * FROM vet_schedule WHERE vet_id = ?').all(u.id),
       timeOff: db.prepare('SELECT * FROM vet_time_off WHERE vet_id = ? AND date_to >= ? ORDER BY date_from').all(u.id, today),
       futureCount: db.prepare("SELECT COUNT(*) AS n FROM appointments WHERE vet_id = ? AND status = 'booked' AND starts_at > ?").get(u.id, localDateTime()).n,
@@ -195,9 +209,33 @@ export default function register(app) {
     db.prepare('UPDATE users SET name = ?, phone = ? WHERE id = ?').run(f.name.slice(0, 80), f.phone || null, u.id);
     if (u.role === 'vet') {
       if (!f.specialty) throw new HttpError(400, 'Укажите специализацию.');
-      db.prepare('UPDATE doctors SET specialty = ?, bio = ? WHERE user_id = ?').run(f.specialty.slice(0, 60), (f.bio ?? '').slice(0, 300), u.id);
+      const branch = db.prepare('SELECT id FROM branches WHERE id = ?').get(Number(f.branch_id))?.id;
+      if (!branch) throw new HttpError(400, 'Выберите филиал.');
+      const exp = f.experience_years === '' || f.experience_years === undefined ? null : Number(f.experience_years);
+      if (exp !== null && !(Number.isInteger(exp) && exp >= 0 && exp <= 60)) throw new HttpError(400, 'Стаж — число лет от 0 до 60.');
+      db.prepare('UPDATE doctors SET specialty = ?, bio = ?, branch_id = ?, gender = ?, experience_years = ? WHERE user_id = ?')
+        .run(f.specialty.slice(0, 60), (f.bio ?? '').slice(0, 300), branch, f.gender === 'f' ? 'f' : 'm', exp, u.id);
     }
     log(db, ctx.user.id, 'Изменён сотрудник', f.name);
+    redirect(res, `/admin/staff/${u.id}?ok=staff`);
+  });
+
+  route('POST', '/admin/staff/:id/photo', async (ctx, res, req, { id }) => {
+    admin(ctx);
+    const f = await readForm(req, { limit: 2 * 1024 * 1024 + 64 * 1024 });
+    checkCsrf(ctx, f);
+    const u = staffById(id);
+    const file = f._files?.photo;
+    if (!file) throw new HttpError(400, 'Выберите файл с фото.');
+    savePhoto(db, u.id, file, 'staff');
+    log(db, ctx.user.id, 'Фото сотрудника', u.name);
+    redirect(res, `/admin/staff/${u.id}?ok=staff`);
+  });
+
+  route('POST', '/admin/staff/:id/photo/delete', async (ctx, res, req, { id }) => {
+    await adminForm(ctx, req);
+    const u = staffById(id);
+    db.prepare('DELETE FROM staff_photos WHERE user_id = ?').run(u.id);
     redirect(res, `/admin/staff/${u.id}?ok=staff`);
   });
 

@@ -8,14 +8,17 @@ import * as view from '../views/client.js';
 export const BOOK_DAYS_AHEAD = 60;
 const PHOTO_LIMIT = 2 * 1024 * 1024;
 
-export function savePhoto(db, petId, file) {
+// Фото питомца или сотрудника: проверка размера и формата, затем запись в базу
+const PHOTO_TABLES = { pet: ['pet_photos', 'pet_id'], staff: ['staff_photos', 'user_id'] };
+export function savePhoto(db, id, file, kind = 'pet') {
   if (!file) return false;
   if (file.data.length > PHOTO_LIMIT) throw new HttpError(413, 'Фото больше 2 МБ. Уменьшите его и попробуйте снова.');
   const mime = imageMime(file.data);
   if (!mime) throw new HttpError(400, 'Это не похоже на фото. Подойдут JPG, PNG или WebP.');
-  db.prepare(`INSERT INTO pet_photos (pet_id, mime, data) VALUES (?, ?, ?)
-    ON CONFLICT(pet_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = datetime('now','localtime')`)
-    .run(petId, mime, file.data);
+  const [table, key] = PHOTO_TABLES[kind];
+  db.prepare(`INSERT INTO ${table} (${key}, mime, data) VALUES (?, ?, ?)
+    ON CONFLICT(${key}) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = datetime('now','localtime')`)
+    .run(id, mime, file.data);
   return true;
 }
 
@@ -105,7 +108,7 @@ export default function register(app) {
   function bookPage(ctx, res, values, error, status = 200) {
     const today = localDate();
     page(res, ctx, 'Запись на приём', view.book({
-      pets: petsOf(ctx.user.id), services: app.services(), doctors: app.doctors(),
+      pets: petsOf(ctx.user.id), services: app.services(), doctors: app.doctors(), branches: app.branches(),
       values, error, today, maxDate: addDays(today, BOOK_DAYS_AHEAD), csrf: ctx.user.csrf,
     }), { status });
   }
@@ -120,16 +123,16 @@ export default function register(app) {
     const f = await readForm(req);
     checkCsrf(ctx, f);
     const pet = db.prepare('SELECT id, name FROM pets WHERE id = ? AND owner_id = ?').get(Number(f.pet_id), ctx.user.id);
-    const vet = db.prepare('SELECT d.user_id FROM doctors d JOIN users u ON u.id = d.user_id WHERE d.user_id = ? AND u.blocked = 0').get(Number(f.vet_id));
+    const vet = db.prepare('SELECT d.user_id, d.branch_id FROM doctors d JOIN users u ON u.id = d.user_id WHERE d.user_id = ? AND u.blocked = 0').get(Number(f.vet_id));
     const svc = db.prepare('SELECT * FROM services WHERE id = ? AND active = 1').get(Number(f.service_id));
     let error = !pet || !vet || !svc ? 'Выберите питомца, услугу и врача.'
       : checkBookingDate(f.date) ?? (!isTime(f.time) ? 'Выберите время приёма.' : null);
     error ??= slotProblem(db, vet.user_id, f.date, f.time, svc.duration_min);
     if (error) return bookPage(ctx, res, f, error, 400);
 
-    db.prepare(`INSERT INTO appointments (pet_id, vet_id, service_id, starts_at, complaint, duration_min, price, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(pet.id, vet.user_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
+    db.prepare(`INSERT INTO appointments (pet_id, vet_id, branch_id, service_id, starts_at, complaint, duration_min, price, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(pet.id, vet.user_id, vet.branch_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
     log(db, ctx.user.id, 'Запись', `${pet.name}: ${svc.name}, ${f.date} ${f.time}`);
     redirect(res, '/cabinet?ok=booked');
   });

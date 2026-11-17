@@ -23,11 +23,13 @@ export default function register(app) {
     const p = ctx.url.searchParams;
     const date = isDate(p.get('date') ?? '') ? p.get('date') : localDate();
     const vetFilter = ctx.user.role === 'vet' ? ctx.user.id : Number(p.get('vet')) || '';
-    const rows = db.prepare(`${app.apptSql} WHERE a.starts_at LIKE ? ${vetFilter ? 'AND a.vet_id = ?' : ''} ORDER BY a.starts_at, v.name`)
-      .all(`${date}T%`, ...(vetFilter ? [vetFilter] : []));
+    const branchFilter = ctx.user.role === 'vet' ? '' : Number(p.get('branch')) || '';
+    const where = [vetFilter && 'a.vet_id = ?', branchFilter && 'a.branch_id = ?'].filter(Boolean);
+    const rows = db.prepare(`${app.apptSql} WHERE a.starts_at LIKE ? ${where.map((w) => `AND ${w}`).join(' ')} ORDER BY a.starts_at, v.name`)
+      .all(`${date}T%`, ...[vetFilter, branchFilter].filter(Boolean));
     page(res, ctx, 'Очередь', view.queue({
-      user: ctx.user, date, prev: addDays(date, -1), next: addDays(date, 1), rows,
-      doctors: app.doctors(), vetFilter: ctx.user.role === 'vet' ? '' : vetFilter, csrf: ctx.user.csrf,
+      user: ctx.user, date, prev: addDays(date, -1), next: addDays(date, 1), rows, branches: app.branches(),
+      doctors: app.doctors(), vetFilter: ctx.user.role === 'vet' ? '' : vetFilter, branchFilter, csrf: ctx.user.csrf,
     }));
   });
 
@@ -167,6 +169,7 @@ export default function register(app) {
     if (!p) throw new HttpError(404);
     const visits = db.prepare(`
       SELECT a.id, a.starts_at, a.status, a.complaint, s.name AS service_name, s.is_vaccination, v.name AS vet_name,
+             (SELECT name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
              r.diagnosis, r.treatment, r.recommendations, r.weight_kg
       FROM appointments a JOIN services s ON s.id = a.service_id JOIN users v ON v.id = a.vet_id
       LEFT JOIN records r ON r.appointment_id = a.id
@@ -190,7 +193,7 @@ export default function register(app) {
     const pets = owner ? db.prepare('SELECT * FROM pets WHERE owner_id = ? ORDER BY name').all(owner.id) : [];
     const today = localDate();
     page(res, ctx, 'Запись по телефону', view.receptionBook({
-      phone, owner, pets, services: app.services(), doctors: app.doctors(),
+      phone, owner, pets, services: app.services(), doctors: app.doctors(), branches: app.branches(),
       values, error, today, maxDate: addDays(today, BOOK_DAYS_AHEAD), csrf: ctx.user.csrf,
     }), { status });
   }
@@ -206,7 +209,7 @@ export default function register(app) {
     checkCsrf(ctx, f);
     if (digits(f.phone).length < 10) return receptionPage(ctx, res, f, 'Проверьте номер телефона.', 400);
     let owner = findOwner(f.phone);
-    const vet = db.prepare('SELECT d.user_id FROM doctors d JOIN users u ON u.id = d.user_id WHERE d.user_id = ? AND u.blocked = 0').get(Number(f.vet_id));
+    const vet = db.prepare('SELECT d.user_id, d.branch_id FROM doctors d JOIN users u ON u.id = d.user_id WHERE d.user_id = ? AND u.blocked = 0').get(Number(f.vet_id));
     const svc = db.prepare('SELECT * FROM services WHERE id = ? AND active = 1').get(Number(f.service_id));
     const newPet = f.pet_id === 'new' || !f.pet_id;
     const pet = !newPet && owner ? db.prepare('SELECT id, name FROM pets WHERE id = ? AND owner_id = ?').get(Number(f.pet_id), owner.id) : null;
@@ -230,9 +233,9 @@ export default function register(app) {
       }
       const petId = pet?.id ?? Number(db.prepare('INSERT INTO pets (owner_id, name, species) VALUES (?, ?, ?)')
         .run(owner.id, f.pet_name.slice(0, 40), (f.species || 'Другое').slice(0, 20)).lastInsertRowid);
-      db.prepare(`INSERT INTO appointments (pet_id, vet_id, service_id, starts_at, complaint, duration_min, price, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(petId, vet.user_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
+      db.prepare(`INSERT INTO appointments (pet_id, vet_id, branch_id, service_id, starts_at, complaint, duration_min, price, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(petId, vet.user_id, vet.branch_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
       log(db, ctx.user.id, 'Запись по телефону', `${owner.name}, ${pet?.name ?? f.pet_name}: ${svc.name}, ${f.date} ${f.time}`);
       db.exec('COMMIT');
     } catch (e) {

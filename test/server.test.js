@@ -44,7 +44,8 @@ const postMultipart = (path, s, fields, file) => {
 };
 
 // Ближайший день, когда работает врач
-function workday(vetId, from = addDays(localDate(), 1)) {
+// По умолчанию — через 20 дней: демо-записи создаются только на неделю вперёд
+function workday(vetId, from = addDays(localDate(), 20)) {
   for (let i = 0; i < 14; i++) {
     const d = addDays(from, i);
     if (db.prepare('SELECT 1 FROM vet_schedule WHERE vet_id = ? AND weekday = ?').get(vetId, weekday(d))) return d;
@@ -57,9 +58,11 @@ describe('сайт и вход', () => {
   test('главная показывает услуги, врачей, рейтинг и отзывы из базы', async () => {
     const page = await html('/');
     assert.match(page, /Первичный осмотр/);
-    assert.match(page, /Дмитрий Ковалёв/);
-    assert.match(page, /отз\./);
-    assert.match(page, /Пн–Пт 09:00–15:00/, 'график хирурга');
+    assert.match(page, /Врачи с лучшими отзывами/);
+    assert.match(page, /отзыв/);
+    assert.match(page, /пр\. Мангилик Ел, 20/, 'филиалы на главной');
+    assert.match(page, /data-map=/, 'карта');
+    assert.match(page, /\/doctors\/\d+\/photo/, 'портреты врачей');
   });
 
   test('неверный пароль не пускает, без входа — на страницу входа', async () => {
@@ -110,7 +113,7 @@ describe('владелец', () => {
 
     const add = await postMultipart('/pets', s, { name: 'Мурка', species: 'Кошка' }, { name: 'photo', data: PNG, type: 'image/png', filename: 'murka.png' });
     assert.equal(add.status, 303);
-    const pet = db.prepare("SELECT id FROM pets WHERE name = 'Мурка'").get();
+    const pet = db.prepare("SELECT p.id FROM pets p JOIN users u ON u.id = p.owner_id WHERE u.email = 'new@test.kz'").get();
     const photo = await get(`/pets/${pet.id}/photo`, s);
     assert.equal(photo.status, 200);
     assert.equal(photo.headers.get('content-type'), 'image/png');
@@ -128,7 +131,7 @@ describe('владелец', () => {
 
   test('фото чужого питомца не отдаётся, не-картинка отклоняется', async () => {
     const other = await login('client@khvost.local', 'Client12345');
-    const pet = db.prepare("SELECT id FROM pets WHERE name = 'Мурка'").get();
+    const pet = db.prepare("SELECT p.id FROM pets p JOIN users u ON u.id = p.owner_id WHERE u.email = 'new@test.kz'").get();
     assert.equal((await get(`/pets/${pet.id}/photo`, other)).status, 404);
     const own = db.prepare("SELECT id FROM pets WHERE name = 'Барсик'").get();
     const bad = await postMultipart(`/pets/${own.id}/photo`, other, {}, { name: 'photo', data: Buffer.from('not an image'), type: 'image/png', filename: 'x.png' });
@@ -146,7 +149,7 @@ describe('владелец', () => {
     const s = await login('client@khvost.local', 'Client12345');
     const a = db.prepare(`SELECT a.* FROM appointments a JOIN pets p ON p.id = a.pet_id
       WHERE p.name = 'Барсик' AND a.status = 'booked' AND a.vet_id = 4`).get();
-    const date = workday(4, addDays(localDate(), 5));
+    const date = workday(4, addDays(localDate(), 25));
     const ok = await post(`/appointments/${a.id}/reschedule`, s, { date, time: '11:00' });
     assert.equal(ok.headers.get('location'), '/cabinet?ok=moved');
     assert.equal(db.prepare('SELECT starts_at FROM appointments WHERE id = ?').get(a.id).starts_at, `${date}T11:00`);
@@ -184,7 +187,8 @@ describe('график врачей', () => {
     db.prepare('DELETE FROM vet_time_off WHERE vet_id = 4').run();
 
     // Хирург работает до 15:00 — 60-минутная операция в 14:30 не помещается
-    const slots = (await (await get(`/api/slots?vet=4&date=${day}&service=5`, s)).json()).slots;
+    const sterilization = db.prepare("SELECT id FROM services WHERE name = 'Стерилизация кошки'").get().id;
+    const slots = (await (await get(`/api/slots?vet=4&date=${day}&service=${sterilization}`, s)).json()).slots;
     assert.equal(slots.at(-1).time, '14:00');
   });
 });
@@ -264,7 +268,7 @@ describe('администратор', () => {
     const bytes = Buffer.from(await csv.arrayBuffer());
     assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'BOM — чтобы Excel понял UTF-8');
     const text = bytes.subarray(3).toString('utf8');
-    assert.ok(text.startsWith('№;Дата;Время;Пациент'));
+    assert.ok(text.startsWith('№;Дата;Время;Филиал;Пациент'));
     assert.ok(text.split('\r\n').length > 20);
   });
 
@@ -274,7 +278,7 @@ describe('администратор', () => {
     assert.equal(r.status, 303);
     const id = Number(r.headers.get('location').match(/staff\/(\d+)/)[1]);
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM vet_schedule WHERE vet_id = ?').get(id).n, 5);
-    assert.match(await html('/'), /Ева Новикова/);
+    assert.match(await html('/doctors'), /Ева Новикова/);
 
     assert.equal((await post(`/admin/staff/${id}/schedule`, s, { on_6: '1', start_6: '10:00', end_6: '14:00' })).status, 303);
     assert.deepEqual(db.prepare('SELECT weekday, start_time, end_time FROM vet_schedule WHERE vet_id = ?').all(id).map((x) => ({ ...x })),
@@ -285,7 +289,7 @@ describe('администратор', () => {
     assert.equal((await get('/queue', eva)).headers.get('location'), '/login', 'сессия закрыта');
     const again = await fetch(`${base}/login`, { method: 'POST', body: new URLSearchParams({ email: 'eva@khvost.local', password: 'Eva12345' }) });
     assert.equal(again.status, 403);
-    assert.doesNotMatch(await html('/'), /Ева Новикова/);
+    assert.doesNotMatch(await html('/doctors'), /Ева Новикова/);
   });
 
   test('цены услуг и препаратов меняются, старые записи сохраняют свою цену', async () => {
@@ -312,6 +316,50 @@ describe('администратор', () => {
   });
 });
 
+describe('филиалы и врачи', () => {
+  test('10 филиалов на карте и в списке, у каждого свои врачи', async () => {
+    const page = await html('/branches');
+    assert.equal((page.match(/class="card branch-card"/g) ?? []).length, 10);
+    const data = JSON.parse(page.match(/data-map="([^"]+)"/)[1].replaceAll('&quot;', '"'));
+    assert.equal(data.length, 10);
+    assert.ok(data.every((b) => b.lat > 51 && b.lat < 51.3 && b.lng > 71.2 && b.lng < 71.7), 'координаты в Астане');
+    assert.match(page, /Тауелсиздик/);
+  });
+
+  test('фильтр врачей по специализации и филиалу', async () => {
+    const surgeons = await html('/doctors?specialty=Хирург');
+    assert.match(surgeons, /Мария Ахметова/);
+    assert.doesNotMatch(surgeons, /Олег Ли/);
+    const b2 = await html('/doctors?branch=2');
+    assert.match(b2, /Олег Ли/);
+    assert.doesNotMatch(b2, /Мария Ахметова/);
+  });
+
+  test('портрет врача рисуется, загруженное фото его заменяет', async () => {
+    const svg = await get('/doctors/3/photo');
+    assert.equal(svg.headers.get('content-type'), 'image/svg+xml; charset=utf-8');
+    const s = await login('admin@khvost.local', 'Admin12345');
+    assert.equal((await postMultipart('/admin/staff/3/photo', s, {}, { name: 'photo', data: PNG, type: 'image/png', filename: 'me.png' })).status, 303);
+    assert.equal((await get('/doctors/3/photo')).headers.get('content-type'), 'image/png');
+    assert.equal((await post('/admin/staff/3/photo/delete', s, {})).status, 303);
+    assert.match((await get('/doctors/3/photo')).headers.get('content-type'), /svg/);
+    assert.equal((await get('/art/pet/cat.svg')).status, 200);
+  });
+
+  test('запись сохраняет филиал врача; отчёт показывает выручку по филиалам', async () => {
+    const s = await login('client@khvost.local', 'Client12345');
+    const rex = db.prepare("SELECT id FROM pets WHERE name = 'Рекс'").get();
+    const vet = db.prepare("SELECT user_id, branch_id FROM doctors WHERE branch_id = 9 LIMIT 1").get();
+    const date = workday(vet.user_id, addDays(localDate(), 30));
+    const { slots } = await (await get(`/api/slots?vet=${vet.user_id}&date=${date}&service=1`, s)).json();
+    const time = slots.find((x) => x.free).time;
+    assert.equal((await post('/book', s, { pet_id: rex.id, service_id: 1, vet_id: vet.user_id, branch_id: 9, date, time })).status, 303);
+    assert.equal(db.prepare('SELECT branch_id FROM appointments WHERE starts_at = ? AND vet_id = ?').get(`${date}T${time}`, vet.user_id).branch_id, 9);
+    const admin = await login('admin@khvost.local', 'Admin12345');
+    assert.match(await html('/admin/reports?days=30', admin), /Кенесары/);
+  });
+});
+
 describe('миграции', () => {
   test('база первой версии обновляется без потери данных', () => {
     const dir = mkdtempSync(join(tmpdir(), 'khvost-mig-'));
@@ -332,6 +380,8 @@ describe('миграции', () => {
     assert.equal(db2.prepare('SELECT is_vaccination FROM services').get().is_vaccination, 1);
     assert.equal(db2.prepare('SELECT COUNT(*) AS n FROM vet_schedule').get().n, 7, 'старому врачу выдан график');
     assert.equal(db2.prepare("SELECT name FROM pets").get().name, 'Бобик');
+    assert.equal(db2.prepare('SELECT COUNT(*) AS n FROM branches').get().n, 10, 'филиалы добавлены');
+    assert.equal(db2.prepare('SELECT branch_id FROM appointments').get().branch_id, 1, 'старые записи — в главный филиал');
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });

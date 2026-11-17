@@ -1,12 +1,12 @@
 // Страницы персонала: очередь, приём, счёт и чек, поиск и карта пациента, запись по телефону.
 import { esc, humanDate, money, STATUS, SPECIES, PAYMENT, ITEM_KIND } from '../util.js';
-import { csrfField, badge, time, petAvatar, slotPicker } from './layout.js';
+import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields } from './layout.js';
 
 const canReception = (u) => ['reception', 'admin'].includes(u.role);
 
-export function queue({ user, date, prev, next, rows, doctors, vetFilter, csrf }) {
+export function queue({ user, date, prev, next, rows, doctors, branches, vetFilter, branchFilter, csrf }) {
   const counts = Object.fromEntries(Object.keys(STATUS).map((k) => [k, rows.filter((r) => r.status === k).length]));
-  const q = (d) => `/queue?date=${d}${vetFilter ? `&vet=${vetFilter}` : ''}`;
+  const q = (d) => `/queue?date=${d}${vetFilter ? `&vet=${vetFilter}` : ''}${branchFilter ? `&branch=${branchFilter}` : ''}`;
   return `
 <div class="page-head">
   <div><h1>Очередь · ${esc(humanDate(date))}</h1>
@@ -15,18 +15,19 @@ export function queue({ user, date, prev, next, rows, doctors, vetFilter, csrf }
     <a class="btn btn-ghost btn-sm" href="${q(prev)}" aria-label="Предыдущий день">←</a>
     <input type="date" name="date" value="${esc(date)}" data-autosubmit-field aria-label="Дата">
     <a class="btn btn-ghost btn-sm" href="${q(next)}" aria-label="Следующий день">→</a>
-    ${user.role === 'vet' ? '' : `<select name="vet" data-autosubmit-field aria-label="Врач"><option value="">Все врачи</option>${doctors.map((d) => `<option value="${d.id}"${String(d.id) === String(vetFilter) ? ' selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`}
+    ${user.role === 'vet' ? '' : `<select name="branch" data-autosubmit-field aria-label="Филиал"><option value="">Все филиалы</option>${branches.map((b) => `<option value="${b.id}"${String(b.id) === String(branchFilter) ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}</select>
+    <select name="vet" data-autosubmit-field aria-label="Врач"><option value="">Все врачи</option>${doctors.filter((d) => !branchFilter || d.branch_id === Number(branchFilter)).map((d) => `<option value="${d.id}"${String(d.id) === String(vetFilter) ? ' selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`}
     ${canReception(user) ? `<a class="btn btn-sm" href="/reception/book?date=${esc(date)}">+ Записать</a>` : ''}
   </form>
 </div>
 ${rows.length ? `<div class="table-wrap"><table class="table">
-  <thead><tr><th>Время</th><th>Питомец</th><th>Владелец</th><th>Услуга</th><th>Врач</th><th>Статус</th><th>Действия</th></tr></thead>
+  <thead><tr><th>Время</th><th>Питомец</th><th>Владелец</th><th>Услуга</th><th>Врач и филиал</th><th>Статус</th><th>Действия</th></tr></thead>
   <tbody>${rows.map((r) => `<tr class="row-${esc(r.status)}">
     <td><b>${time(r.starts_at)}</b><br><small class="muted">${r.duration_min} мин</small></td>
     <td><div class="pet-cell">${petAvatar(r, 'sm')}<div><a href="/patients/${r.pet_id}">${esc(r.pet_name)}</a><br><small class="muted">${esc(r.species)}</small></div></div></td>
     <td>${esc(r.owner_name)}<br><small class="muted">${esc(r.owner_phone)}</small></td>
     <td>${esc(r.service_name)}</td>
-    <td>${esc(r.vet_name)}</td>
+    <td>${esc(r.vet_name)}<br><small class="muted">${esc(r.branch_name ?? '')}</small></td>
     <td>${badge(r.status)}${r.paid_at ? '<br><span class="badge badge-paid">Оплачено</span>' : ''}</td>
     <td class="actions">
       ${canReception(user) && r.status === 'booked' ? `<form method="post" action="/appointments/${r.id}/status">${csrfField(csrf)}<input type="hidden" name="status" value="arrived"><button class="btn btn-sm">Пришёл</button></form>` : ''}
@@ -80,7 +81,7 @@ export function appointment({ user, a, record, history, lines, items, total, csr
   ${petAvatar(a, 'lg')}
   <div>
     <h1>${esc(a.pet_name)} <small class="muted">${esc(a.species)}${a.breed ? `, ${esc(a.breed)}` : ''}</small></h1>
-    <p class="muted">${esc(humanDate(a.starts_at))}, ${time(a.starts_at)} · ${esc(a.service_name)} · ${esc(a.vet_name)} ${badge(a.status)}</p>
+    <p class="muted">${esc(humanDate(a.starts_at))}, ${time(a.starts_at)} · ${esc(a.service_name)} · ${esc(a.vet_name)} · ${esc(a.branch_name ?? '')} ${badge(a.status)}</p>
   </div>
 </div><a class="btn btn-ghost" href="/patients/${a.pet_id}">Медкарта</a></div>
 <div class="grid grid-2">
@@ -139,7 +140,7 @@ export function receipt({ a, lines, total }) {
   @media print { button { display: none; } body { margin: 0; } }
 </style></head><body>
 <h1>Доктор Хвост</h1>
-<p class="c m">Ветеринарная клиника<br>г. Алматы, ул. Примерная, 12 · +7 727 000 00 00</p>
+<p class="c m">Ветеринарная клиника, филиал «${esc(a.branch_name ?? '')}»<br>г. Астана, ${esc(a.branch_address ?? '')}</p>
 <div class="line"></div>
 <p><b>${a.paid_at ? 'Кассовый чек' : 'Счёт'} №${a.id}</b><br>
 Дата приёма: ${esc(a.starts_at.replace('T', ' '))}<br>
@@ -199,7 +200,7 @@ ${p.notes ? `<p class="reminder reminder-gap">⚠ ${esc(p.notes)}</p>` : ''}
   <h2>История</h2>
   ${visits.length ? visits.map((v) => `
   <article class="card record">
-    <div class="record-head"><a href="/appointments/${v.id}"><b>${esc(humanDate(v.starts_at))}</b>, ${time(v.starts_at)}</a> · ${esc(v.service_name)} · ${esc(v.vet_name)} ${badge(v.status)}</div>
+    <div class="record-head"><a href="/appointments/${v.id}"><b>${esc(humanDate(v.starts_at))}</b>, ${time(v.starts_at)}</a> · ${esc(v.service_name)} · ${esc(v.vet_name)} · ${esc(v.branch_name ?? '')} ${badge(v.status)}</div>
     ${v.diagnosis ? `<dl>
       <dt>Диагноз</dt><dd>${esc(v.diagnosis)}</dd>
       ${v.treatment ? `<dt>Лечение</dt><dd>${esc(v.treatment)}</dd>` : ''}
@@ -210,7 +211,7 @@ ${p.notes ? `<p class="reminder reminder-gap">⚠ ${esc(p.notes)}</p>` : ''}
 </section>`;
 }
 
-export function receptionBook({ phone, owner, pets, services, doctors, values = {}, error, today, maxDate, csrf }) {
+export function receptionBook({ phone, owner, pets, services, doctors, branches, values = {}, error, today, maxDate, csrf }) {
   const sel = (a, b) => (String(a) === String(b) ? ' selected' : '');
   return `
 <h1>Запись по телефону</h1>
@@ -235,7 +236,7 @@ ${phone ? `
     <label>Вид<select name="species">${SPECIES.map((s) => `<option${sel(s, values.species)}>${s}</option>`).join('')}</select></label>
   </div>
   <label>Услуга<select name="service_id" required data-service>${services.map((s) => `<option value="${s.id}"${sel(s.id, values.service_id)}>${esc(s.name)} — ${money(s.price)}, ${s.duration_min} мин</option>`).join('')}</select></label>
-  <label>Врач<select name="vet_id" required data-vet>${doctors.map((d) => `<option value="${d.id}"${sel(d.id, values.vet_id)}>${esc(d.name)}, ${esc(d.specialty)}</option>`).join('')}</select></label>
+  ${branchVetFields({ branches, doctors, values })}
   <label>Дата<input type="date" name="date" required min="${today}" max="${maxDate}" value="${esc(values.date || today)}" data-date></label>
   ${slotPicker({ selected: values.time })}
   <label class="span-2">Жалоба<textarea name="complaint" rows="2" maxlength="500">${esc(values.complaint)}</textarea></label>

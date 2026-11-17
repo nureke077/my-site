@@ -54,8 +54,13 @@ export function createApp(db, { backupDir = process.env.CLINIC_BACKUPS || 'backu
       routes.push({ method, re, keys, handler });
     },
 
-    page(res, ctx, title, body, { status = 200 } = {}) {
-      send(res, status, layout({ title, body, user: ctx.user, csrf: ctx.user?.csrf, flash: ctx.flash, path: ctx.url.pathname }));
+    // full — страница сама раскладывает секции на всю ширину (главная, филиалы); иначе — колонка
+    page(res, ctx, title, body, { status = 200, full = false, map = false } = {}) {
+      const branches = db.prepare('SELECT id, name, address FROM branches ORDER BY id').all();
+      send(res, status, layout({
+        title, body: full ? body : `<div class="container page">${body}</div>`, map, branches,
+        user: ctx.user, csrf: ctx.user?.csrf, flash: ctx.flash, path: ctx.url.pathname,
+      }));
     },
 
     requireRole(ctx, roles) {
@@ -70,19 +75,23 @@ export function createApp(db, { backupDir = process.env.CLINIC_BACKUPS || 'backu
     // Запись со всеми связанными данными
     apptSql: `
       SELECT a.*, p.name AS pet_name, p.species, p.breed, p.birth_date, p.notes, p.owner_id,
-             s.name AS service_name, v.name AS vet_name,
+             s.name AS service_name, s.icon AS service_icon, v.name AS vet_name,
              o.name AS owner_name, o.phone AS owner_phone,
+             b.name AS branch_name, b.address AS branch_address,
              (SELECT 1 FROM pet_photos ph WHERE ph.pet_id = p.id) AS has_photo
       FROM appointments a
       JOIN pets p ON p.id = a.pet_id
       JOIN services s ON s.id = a.service_id
       JOIN users v ON v.id = a.vet_id
-      JOIN users o ON o.id = p.owner_id`,
+      JOIN users o ON o.id = p.owner_id
+      LEFT JOIN branches b ON b.id = a.branch_id`,
   };
   app.apptById = (id) => db.prepare(`${app.apptSql} WHERE a.id = ?`).get(Number(id));
-  app.doctors = () => db.prepare(`SELECT u.id, u.name, d.specialty, d.bio FROM doctors d
-    JOIN users u ON u.id = d.user_id WHERE u.blocked = 0 ORDER BY u.name`).all();
-  app.services = () => db.prepare('SELECT * FROM services WHERE active = 1 ORDER BY price').all();
+  app.doctors = () => db.prepare(`SELECT u.id, u.name, d.specialty, d.bio, d.gender, d.experience_years, d.branch_id, b.name AS branch_name
+    FROM doctors d JOIN users u ON u.id = d.user_id LEFT JOIN branches b ON b.id = d.branch_id
+    WHERE u.blocked = 0 ORDER BY b.id, u.name`).all();
+  app.branches = () => db.prepare('SELECT * FROM branches ORDER BY id').all();
+  app.services = () => db.prepare('SELECT * FROM services WHERE active = 1 ORDER BY category, price').all();
 
   registerPublic(app);
   registerClient(app);
