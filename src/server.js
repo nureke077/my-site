@@ -137,7 +137,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === normalize(resolve(proc
   const db = openDb();
   const port = Number(process.env.PORT) || 8000;
   const host = process.env.HOST || '127.0.0.1';
-  http.createServer(createApp(db)).listen(port, host, () => {
+  const server = http.createServer(createApp(db));
+  server.on('error', (e) => {
+    if (e.code !== 'EADDRINUSE') throw e;
+    console.error(`\nПорт ${port} уже занят — скорее всего, сайт уже запущен в другом окне.
+Закройте то окно (или нажмите в нём Ctrl + C) и запустите снова.
+Остановить все копии Node.js:  taskkill /IM node.exe /F
+Или запустить на другом порту:  $env:PORT=${port + 1}; node src/server.js\n`);
+    process.exit(1);
+  });
+  server.listen(port, host, () => {
     console.log(`Доктор Хвост работает: http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`);
   });
 }
