@@ -118,5 +118,14 @@ export function branchVetFields({ branches, doctors, values = {} }) {
     <option value="">Любой филиал</option>
     ${branches.map((b) => `<option value="${b.id}"${sel(b.id, values.branch_id)}>${esc(b.name)} — ${esc(b.address)}</option>`).join('')}
   </select></label>
-  <label>Врач<select name="vet_id" required data-vet>${doctors.map((d) => `<option value="${d.id}" data-branch="${d.branch_id}"${sel(d.id, values.vet_id)}>${esc(d.name)}, ${esc(d.specialty)} · ${esc(d.branch_name)}</option>`).join('')}</select></label>`;
+  <label>Врач<select name="vet_id" required data-vet>${doctors.map((d) => `<option value="${d.id}" data-branch="${d.branch_id}" data-specialty="${esc(d.specialty)}"${sel(d.id, values.vet_id)}>${esc(d.name)}, ${esc(d.specialty)} · ${esc(d.branch_name)}</option>`).join('')}</select></label>`;
+}
+
+// ЛЗ 12: поле жалобы и место для подсказки специалиста (заполняет public/app.js)
+export function complaintWithHint(values = {}, label = 'Что беспокоит') {
+  return `
+  <label class="span-2">${label}<textarea name="complaint" rows="3" maxlength="500" data-complaint
+    placeholder="Например: чешется и выпадает шерсть на спине">${esc(values.complaint)}</textarea></label>
+  <input type="hidden" name="ai_suggestion_id" value="" data-ai-id>
+  <div class="ai-hint span-2" data-ai-hint hidden aria-live="polite"></div>`;
 }

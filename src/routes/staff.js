@@ -6,6 +6,7 @@ import { localDate, addDays, isDate, isTime, digits, samePhone, STATUS, PAYMENT 
 import { slotProblem } from '../schedule.js';
 import { BOOK_DAYS_AHEAD, checkBookingDate } from './client.js';
 import * as view from '../views/staff.js';
+import { markSuggestion } from './ai.js';
 
 const STAFF = ['reception', 'vet', 'admin'];
 const FRONT = ['reception', 'admin'];
@@ -236,6 +237,7 @@ export default function register(app) {
       db.prepare(`INSERT INTO appointments (pet_id, vet_id, branch_id, service_id, starts_at, complaint, duration_min, price, created_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(petId, vet.user_id, vet.branch_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
+      if (f.ai_suggestion_id) markSuggestion(db, f.ai_suggestion_id, ctx.user.id, Number(db.prepare('SELECT last_insert_rowid() AS id').get().id));
       log(db, ctx.user.id, 'Запись по телефону', `${owner.name}, ${pet?.name ?? f.pet_name}: ${svc.name}, ${f.date} ${f.time}`);
       db.exec('COMMIT');
     } catch (e) {

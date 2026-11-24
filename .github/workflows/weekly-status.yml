@@ -1,0 +1,30 @@
+# ЛЗ 13: еженедельный статус-отчёт. В GitHub Actions нет локальной модели,
+# поэтому здесь собирается отчёт-шаблон без ИИ (все числа те же). Черновик с ИИ — на компьютере с Ollama
+# или на сайте: Управление → PM-ассистент.
+name: weekly-status
+
+on:
+  schedule:
+    - cron: '0 10 * * 5'   # каждую пятницу 10:00 UTC (16:00 в Астане)
+  workflow_dispatch:       # и кнопкой вручную
+
+permissions:
+  contents: read
+  issues: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python scripts/weekly_status.py --no-model
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weekly-status
+          path: reports/

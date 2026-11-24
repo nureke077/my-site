@@ -1,6 +1,6 @@
 // Страницы персонала: очередь, приём, счёт и чек, поиск и карта пациента, запись по телефону.
 import { esc, humanDate, money, STATUS, SPECIES, PAYMENT, ITEM_KIND } from '../util.js';
-import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields } from './layout.js';
+import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields, complaintWithHint } from './layout.js';
 
 const canReception = (u) => ['reception', 'admin'].includes(u.role);
 
@@ -235,11 +235,11 @@ ${phone ? `
     <label>Кличка<input name="pet_name" value="${esc(values.pet_name)}" maxlength="40"></label>
     <label>Вид<select name="species">${SPECIES.map((s) => `<option${sel(s, values.species)}>${s}</option>`).join('')}</select></label>
   </div>
+  ${complaintWithHint(values, 'Жалоба со слов владельца')}
   <label>Услуга<select name="service_id" required data-service>${services.map((s) => `<option value="${s.id}"${sel(s.id, values.service_id)}>${esc(s.name)} — ${money(s.price)}, ${s.duration_min} мин</option>`).join('')}</select></label>
   ${branchVetFields({ branches, doctors, values })}
   <label>Дата<input type="date" name="date" required min="${today}" max="${maxDate}" value="${esc(values.date || today)}" data-date></label>
   ${slotPicker({ selected: values.time })}
-  <label class="span-2">Жалоба<textarea name="complaint" rows="2" maxlength="500">${esc(values.complaint)}</textarea></label>
   <button class="btn btn-lg span-2">Записать</button>
 </form>` : ''}`;
 }

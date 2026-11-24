@@ -212,6 +212,63 @@ export const MIGRATIONS = [
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   );
   `,
+  // v4 — ЛЗ 12 (ИИ-подсказка специалиста) и ЛЗ 13 (ИИ-ассистент менеджера проекта)
+  `
+  -- ЛЗ 12: каждая подсказка. Текст жалобы НЕ хранится — только длина (минимизация персональных данных).
+  CREATE TABLE ai_suggestions (
+    id             INTEGER PRIMARY KEY,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    source         TEXT NOT NULL CHECK (source IN ('ai','rules')),
+    model          TEXT,
+    prompt_version TEXT,
+    label          TEXT,                       -- NULL = отказ («не уверен»)
+    latency_ms     INTEGER,
+    text_length    INTEGER NOT NULL,
+    accepted       INTEGER,                    -- 1 — записались к подсказанной специальности, 0 — выбрали другое
+    appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL
+  );
+  CREATE INDEX ai_sugg_date ON ai_suggestions(created_at);
+
+  -- ЛЗ 13: черновики статус-отчётов, журнал проверки и замеры времени
+  CREATE TABLE pm_reports (
+    id             INTEGER PRIMARY KEY,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    repo           TEXT NOT NULL,
+    period_from    TEXT NOT NULL,
+    period_to      TEXT NOT NULL,
+    facts_json     TEXT NOT NULL,
+    facts_source   TEXT NOT NULL,              -- github / git / нет данных
+    prompt_version TEXT NOT NULL,
+    source         TEXT NOT NULL CHECK (source IN ('ai','template')),
+    model          TEXT,
+    draft          TEXT NOT NULL,
+    raw_output     TEXT,
+    gen_seconds    REAL,
+    auto_flags     TEXT NOT NULL DEFAULT '[]', -- числа из черновика, которых нет в фактах
+    final_text     TEXT,
+    verified_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    verified_at    TEXT
+  );
+  CREATE TABLE pm_checks (
+    id         INTEGER PRIMARY KEY,
+    report_id  INTEGER NOT NULL REFERENCES pm_reports(id) ON DELETE CASCADE,
+    claim      TEXT NOT NULL,                  -- что написала модель
+    actual     TEXT NOT NULL DEFAULT '',       -- как на самом деле
+    verdict    TEXT NOT NULL CHECK (verdict IN ('ok','semantic','style')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  CREATE TABLE pm_time_log (
+    id         INTEGER PRIMARY KEY,
+    report_id  INTEGER REFERENCES pm_reports(id) ON DELETE SET NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('manual','generation','verification','editing','development')),
+    minutes    REAL NOT NULL CHECK (minutes > 0),
+    note       TEXT NOT NULL DEFAULT '',
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  `,
 ];
 
 function migrate(db) {

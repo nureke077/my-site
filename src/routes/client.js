@@ -4,6 +4,7 @@ import { HttpError, readForm, redirect, json, send, imageMime } from '../http.js
 import { localDate, localDateTime, addDays, isDate, isTime } from '../util.js';
 import { daySlots, slotProblem } from '../schedule.js';
 import * as view from '../views/client.js';
+import { markSuggestion } from './ai.js';
 
 export const BOOK_DAYS_AHEAD = 60;
 const PHOTO_LIMIT = 2 * 1024 * 1024;
@@ -133,6 +134,8 @@ export default function register(app) {
     db.prepare(`INSERT INTO appointments (pet_id, vet_id, branch_id, service_id, starts_at, complaint, duration_min, price, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(pet.id, vet.user_id, vet.branch_id, svc.id, `${f.date}T${f.time}`, (f.complaint ?? '').slice(0, 500), svc.duration_min, svc.price, ctx.user.id);
+    const apptId = Number(db.prepare('SELECT last_insert_rowid() AS id').get().id);
+    if (f.ai_suggestion_id) markSuggestion(db, f.ai_suggestion_id, ctx.user.id, apptId);
     log(db, ctx.user.id, 'Запись', `${pet.name}: ${svc.name}, ${f.date} ${f.time}`);
     redirect(res, '/cabinet?ok=booked');
   });

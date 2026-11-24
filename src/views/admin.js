@@ -3,9 +3,10 @@ import { esc, money, ROLE, WEEK, ITEM_KIND, humanDate, stars, plural } from '../
 import { csrfField, doctorAvatar } from './layout.js';
 import { columnChart, barList, dataTable } from './charts.js';
 
-const TABS = [['/admin', 'Сводка'], ['/admin/reports', 'Отчёты'], ['/admin/staff', 'Сотрудники'], ['/admin/prices', 'Прайс'], ['/admin/backups', 'Резервные копии']];
+const TABS = [['/admin', 'Сводка'], ['/admin/reports', 'Отчёты'], ['/admin/staff', 'Сотрудники'], ['/admin/prices', 'Прайс'], ['/admin/backups', 'Резервные копии'],
+  ['/admin/ai', 'ИИ-подсказки · ЛЗ 12'], ['/admin/pm', 'PM-ассистент · ЛЗ 13']];
 
-function tabs(active) {
+export function tabs(active) {
   return `<nav class="tabs" aria-label="Разделы управления">${TABS.map(([href, text]) =>
     `<a href="${href}"${href === active ? ' class="active" aria-current="page"' : ''}>${text}</a>`).join('')}</nav>`;
 }

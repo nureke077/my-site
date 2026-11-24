@@ -11,6 +11,9 @@ import registerPublic from './routes/public.js';
 import registerClient from './routes/client.js';
 import registerStaff from './routes/staff.js';
 import registerAdmin from './routes/admin.js';
+import registerAi from './routes/ai.js';
+import registerPm from './routes/pm.js';
+import registerLabReports from './routes/labreport.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = join(ROOT, 'public');
@@ -97,6 +100,9 @@ export function createApp(db, { backupDir = process.env.CLINIC_BACKUPS || 'backu
   registerClient(app);
   registerStaff(app);
   registerAdmin(app);
+  registerAi(app);
+  registerPm(app);
+  registerLabReports(app);
 
   async function serveStatic(res, pathname) {
     const file = normalize(join(PUBLIC, pathname.slice('/static/'.length)));

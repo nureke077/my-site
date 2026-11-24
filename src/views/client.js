@@ -1,6 +1,6 @@
 // Кабинет владельца, запись, перенос, отзывы.
 import { esc, humanDate, money, SPECIES, stars } from '../util.js';
-import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields } from './layout.js';
+import { csrfField, badge, time, petAvatar, slotPicker, branchVetFields, complaintWithHint } from './layout.js';
 
 function petForm(csrf) {
   return `
@@ -103,12 +103,12 @@ export function book({ pets, services, doctors, branches, values = {}, error, to
 ${error ? `<p class="error">${esc(error)}</p>` : ''}
 <form method="post" action="/book" class="form card book-form" data-book>
   ${csrfField(csrf)}
-  <label>Питомец<select name="pet_id" required>${pets.map((p) => `<option value="${p.id}"${sel(p.id, values.pet_id)}>${esc(p.name)} (${esc(p.species)})</option>`).join('')}</select></label>
+  <label class="span-2">Питомец<select name="pet_id" required>${pets.map((p) => `<option value="${p.id}"${sel(p.id, values.pet_id)}>${esc(p.name)} (${esc(p.species)})</option>`).join('')}</select></label>
+  ${complaintWithHint(values)}
   <label>Услуга<select name="service_id" required data-service>${services.map((s) => `<option value="${s.id}"${sel(s.id, values.service_id)}>${esc(s.name)} — ${money(s.price)}, ${s.duration_min} мин</option>`).join('')}</select></label>
   ${branchVetFields({ branches, doctors, values })}
   <label>Дата<input type="date" name="date" required min="${today}" max="${maxDate}" value="${esc(values.date || today)}" data-date></label>
   ${slotPicker({ selected: values.time })}
-  <label class="span-2">Что беспокоит<textarea name="complaint" rows="3" maxlength="500" placeholder="Например: плохо ест, хромает на заднюю лапу">${esc(values.complaint)}</textarea></label>
   <button class="btn btn-lg span-2">Записаться</button>
 </form>`;
 }
