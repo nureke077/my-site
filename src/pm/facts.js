@@ -14,13 +14,20 @@ const LABEL_IN_PROGRESS = /in progress|в работе|doing/i;
 const LABEL_BLOCKED = /blocked|заблок/i;
 const DEPLOY = /deploy|pages|release|релиз|развёрт/i;
 
+// Запасной путь: утилита gh (GitHub CLI), если установлена и авторизована
+function ghCli(path) {
+  return JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000 }));
+}
+
 async function gh(path, useToken = true) {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'doktor-khvost-pm-assistant' };
   if (useToken && process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   const r = await fetch(`https://api.github.com${path}`, { headers, signal: AbortSignal.timeout(15_000) });
   // Неподходящий токен — публичный репозиторий читается и без него
   if (r.status === 401 && headers.Authorization) return gh(path, false);
-  if (!r.ok) throw new Error(`GitHub API ${r.status} для ${path}`);
+  if (!r.ok) {
+    try { return ghCli(path); } catch { throw new Error(`GitHub API ${r.status} для ${path}`); }
+  }
   return r.json();
 }
 

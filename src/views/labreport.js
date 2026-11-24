@@ -10,9 +10,9 @@ const kzt = (x) => `${Math.round(x).toLocaleString('ru-RU').replace(/\s/g, ' ')}
 const pending = (what, how) => `<div class="pending"><b>Ожидает замера:</b> ${what}<br><span>Как получить: ${how}</span></div>`;
 const NAMES = { baseline: 'Правила без ИИ', 'zero-shot': 'Модель, промпт без примеров', 'few-shot': 'Модель, few-shot (7 примеров)' };
 
-function doc(title, body, generated) {
+export function doc(title, body, generated, lang = 'ru') {
   return `<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
 <style>
   @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
@@ -35,14 +35,22 @@ function doc(title, body, generated) {
   .note { border-left: 4px solid #14a394; background: #f2faf8; padding: 6px 10px; margin: 8px 0; page-break-inside: avoid; }
   .warn { border-left: 4px solid #cc4218; background: #ffede7; padding: 6px 10px; margin: 8px 0; page-break-inside: avoid; }
   .ok { color: #137a3f; font-weight: 700; } .bad { color: #c0352b; font-weight: 700; }
+  .simple { border-left: 4px solid #3d5afe; background: #eef2ff; padding: 6px 10px; margin: 8px 0; page-break-inside: avoid; }
+  .example { border: 1px solid #d5e3e0; border-radius: 6px; padding: 6px 10px; margin: 8px 0; background: #fcfefd; page-break-inside: avoid; }
+  .example b:first-child { color: #0b7d70; }
+  .official { text-align: center; margin-bottom: 14px; }
+  .official p { margin: 2px 0; }
+  .official .work { font-size: 15pt; font-weight: 700; margin-top: 10px; }
+  .signs td { border: none; padding: 3px 0; }
+  .summary li { margin: 3px 0; }
   .toolbar { position: sticky; top: 0; background: #fff; padding: 8px 0 12px; display: flex; gap: 8px; }
   .toolbar button, .toolbar a { font: inherit; padding: 8px 14px; border-radius: 999px; border: 1px solid #0b7d70; background: #0b7d70; color: #fff; cursor: pointer; text-decoration: none; }
   .toolbar a { background: #fff; color: #0b7d70; }
   @media print { .toolbar { display: none; } body { padding: 0; max-width: none; } }
 </style></head><body>
-<div class="toolbar"><button onclick="print()">Печать / сохранить в PDF</button><a href="javascript:history.back()">Назад</a></div>
+<div class="toolbar"><button onclick="print()">${lang === 'kk' ? 'Басып шығару / PDF сақтау' : 'Печать / сохранить в PDF'}</button><a href="javascript:history.back()">${lang === 'kk' ? 'Артқа' : 'Назад'}</a></div>
 ${body}
-<p class="meta" style="margin-top:24px">Отчёт сформирован автоматически сайтом «Доктор Хвост» ${esc(generated)} из файлов прогонов (evals/, reports/) и базы данных сайта.</p>
+<p class="meta" style="margin-top:24px">${lang === 'kk' ? `Есепті «Доктор Хвост» сайты ${esc(generated)} автоматты түрде жасады: сандар іске қосу файлдарынан (evals/, reports/) және сайттың дерекқорынан алынды.` : `Отчёт сформирован автоматически сайтом «Доктор Хвост» ${esc(generated)} из файлов прогонов (evals/, reports/) и базы данных сайта.`}</p>
 </body></html>`;
 }
 
@@ -60,7 +68,7 @@ function metricsTable(runs, labels) {
   </table>`;
 }
 
-function acceptance(runs) {
+export function acceptance(runs) {
   const base = runs.find((r) => r.name === 'baseline')?.meta;
   const model = runs.filter((r) => r.name !== 'baseline' && r.meta).map((r) => r.meta)
     .sort((a, b) => b.metrics.macro_f1 - a.metrics.macro_f1)[0];

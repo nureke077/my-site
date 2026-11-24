@@ -14,7 +14,7 @@ ${tabs('/admin/ai')}
   <p class="eyebrow">ЛЗ 12 · ИИ-функция</p>
   <h1>Подсказка специалиста по жалобе</h1>
   <p class="muted">Владелец пишет, что беспокоит, — сайт подсказывает, к какому врачу записаться. Подсказка не выбирает за человека.</p>
-</div><a class="btn" href="/admin/lab12/report" target="_blank">Отчёт ЛЗ 12 (PDF)</a></div>
+</div><span class="row-actions" style="margin:0"><a class="btn" href="/admin/lab12/report" target="_blank">Есеп ЗЖ 12 (қаз., PDF)</a><a class="btn btn-ghost" href="/admin/lab12/report?lang=ru" target="_blank">Отчёт (рус.)</a></span></div>
 
 <div class="stats">
   <div class="stat"><span>Модель</span><b class="b-sm">${esc(model.name)}</b><small>${model.up ? '<span class="badge badge-done">работает</span>' : '<span class="badge badge-cancelled">недоступна — работают правила</span>'}</small></div>

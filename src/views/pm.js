@@ -26,7 +26,7 @@ ${tabs('/admin/pm')}
   <p class="eyebrow">ЛЗ 13 · ИИ-ассистент менеджера проекта</p>
   <h1>Еженедельный статус-отчёт</h1>
   <p class="muted">Числа считает сайт по данным GitHub. Модель только формулирует текст вокруг готовых чисел. Каждый черновик проверяет человек.</p>
-</div><a class="btn" href="/admin/lab13/report" target="_blank">Отчёт ЛЗ 13 (PDF)</a></div>
+</div><span class="row-actions" style="margin:0"><a class="btn" href="/admin/lab13/report" target="_blank">Есеп ЗЖ 13 (қаз., PDF)</a><a class="btn btn-ghost" href="/admin/lab13/report?lang=ru" target="_blank">Отчёт (рус.)</a></span></div>
 
 <form method="post" action="/admin/pm" class="form form-inline card">
   ${csrfField(csrf)}
